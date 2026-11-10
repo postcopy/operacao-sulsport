@@ -354,7 +354,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 let P = {}, AREA = {}, COL = {};
 function indexar(){ P = Object.fromEntries(MAPA.pecas.map(p => [p.id, p])); AREA = Object.fromEntries(MAPA.areas.map(a => [a.id, a.nome])); COL = Object.fromEntries(MAPA.colunas.map(c => [c.id, c.nome])); TODO = null; }
 const ST = id => (ESTADO.pecas[id] || {status:"manual", detalhe:"Sem verificação."});
-const LABEL = {ok:"Funcionando", atencao:"Pede atenção", falha:"Parado", manual:"Conferido à mão", pendente:"Ainda vai rodar"};
+const LABEL = {ok:"Funcionando", atencao:"Pede atenção", falha:"Parado", manual:"Não comprovado", pendente:"Ainda vai rodar"};
 const IC = {
   alert:'<svg class="i" viewBox="0 0 24 24"><path d="M12 9v4M12 17v.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
   stop:'<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
@@ -426,7 +426,7 @@ function renderTodo(){
 function renderFlows(){
   $("#flows").innerHTML = MAPA.fluxos.map((f,i) => {
     const sts = f.cadeia.map(id => ST(id).status), worst = ["falha","atencao"].find(s => sts.includes(s)) || (sts.every(s => s === "ok") ? "ok" : "manual");
-    return `<button class="flow" data-flow="${i}"><div class="fn"><span>${esc(f.nome)}</span><span class="pill s-${worst}"><span class="dot s-${worst}"></span>${worst === "manual" ? "Parte à mão" : LABEL[worst]}</span></div><div class="chain">${f.cadeia.map((id,k) => `${k ? '<span class="arr">→</span>' : ""}<span class="step"><span class="dot s-${ST(id).status}"></span>${esc(P[id].nome)}</span>`).join("")}</div><p>${esc(f.frase)}</p></button>`;
+    return `<button class="flow" data-flow="${i}"><div class="fn"><span>${esc(f.nome)}</span><span class="pill s-${worst}"><span class="dot s-${worst}"></span>${worst === "manual" ? "Parte não comprovada" : LABEL[worst]}</span></div><div class="chain">${f.cadeia.map((id,k) => `${k ? '<span class="arr">→</span>' : ""}<span class="step"><span class="dot s-${ST(id).status}"></span>${esc(P[id].nome)}</span>`).join("")}</div><p>${esc(f.frase)}</p></button>`;
   }).join("");
   document.querySelectorAll("[data-flow]").forEach(b => b.addEventListener("click", () => { const f = MAPA.fluxos[+b.dataset.flow]; area = "tudo"; go("mapa"); select(f.cadeia[1] || f.cadeia[0], f.cadeia); }));
 }
