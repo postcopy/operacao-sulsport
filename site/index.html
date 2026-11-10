@@ -382,7 +382,7 @@ function frase(){
 }
 function timeline(){
   const demo = MODE === "demo";
-  const evs = demo ? MAPA.agenda_hoje : (MAPA.agenda_hoje || []).filter(e => !e.so_demo && e.status !== "pendente").map(e => ({...e, status: ST(e.peca).status, texto: ST(e.peca).detalhe}));
+  const evs = demo ? MAPA.agenda_hoje : (MAPA.agenda || (MAPA.agenda_hoje || []).filter(e => !e.so_demo && e.status !== "pendente")).map(e => ({...e, status: ST(e.peca).status, texto: ST(e.peca).detalhe}));
   $("#tl-title").textContent = demo ? "Rotinas de hoje" : "Rotinas do dia";
   $("#tl-sub").textContent = demo ? "segunda, 9 de novembro" : "situação na última verificação";
   $("#track").innerHTML = evs.map(e => `<button class="ev s-${e.status}" data-peca="${e.peca}"><div class="mark"><i></i></div><div class="h">${e.hora}</div><div class="n">${esc(e.nome)}</div><div class="r">${esc(e.texto)}</div></button>`).join("");
