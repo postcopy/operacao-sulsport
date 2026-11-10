@@ -372,7 +372,7 @@ function frase(){
   const r = ESTADO.resumo, pend = todos().length;
   $("#frase").innerHTML = pend ? `A operação está de pé, mas <em>${pend} ${pend === 1 ? "coisa precisa" : "coisas precisam"}</em> de você.` : "Tudo rodando como deveria.";
   const ob = (ESTADO.pendencias.find(x => x.tipo === "Lacuna na rotina") || {}).texto;
-  let sub = ob ? "A Olist venceu no fim de semana e a produção começou o dia sem dados; foi refeito à mão às 9h. O resto do dia rodou normalmente." : "";
+  let sub = ob ? ((MAPA.destaques || []).find(r => r.pendencia === "Lacuna na rotina") || {}).resumo || "" : "";
   if (!sub) { const f = MAPA.pecas.filter(p => ST(p.id).status === "falha").map(p => p.nome); sub = ESTADO.verificado_em ? `${r.ok} peças funcionando e ${r.atencao} pedindo atenção` + (f.length ? `. Paradas: ${f.join(", ")}.` : ".") : "Ainda não há verificação registrada na nuvem."; }
   $("#sub").textContent = sub;
   const tot = r.ok + r.atencao + r.falha + r.manual;
@@ -382,7 +382,7 @@ function frase(){
 }
 function timeline(){
   const demo = MODE === "demo";
-  const evs = demo ? MAPA.agenda_hoje : (MAPA.agenda_hoje || []).filter(e => e.peca !== "claude-sessoes-desktop" && e.status !== "pendente").map(e => ({...e, status: ST(e.peca).status, texto: ST(e.peca).detalhe}));
+  const evs = demo ? MAPA.agenda_hoje : (MAPA.agenda_hoje || []).filter(e => !e.so_demo && e.status !== "pendente").map(e => ({...e, status: ST(e.peca).status, texto: ST(e.peca).detalhe}));
   $("#tl-title").textContent = demo ? "Rotinas de hoje" : "Rotinas do dia";
   $("#tl-sub").textContent = demo ? "segunda, 9 de novembro" : "situação na última verificação";
   $("#track").innerHTML = evs.map(e => `<button class="ev s-${e.status}" data-peca="${e.peca}"><div class="mark"><i></i></div><div class="h">${e.hora}</div><div class="n">${esc(e.nome)}</div><div class="r">${esc(e.texto)}</div></button>`).join("");
@@ -392,23 +392,20 @@ let TODO = null;
 function todos(){
   if (TODO) return TODO;
   const out = [];
-  for (const x of ESTADO.pendencias.filter(x => x.tipo === "Lacuna na rotina"))
-    out.push({s:"falha", ic:"stop", t:"A Olist venceu no fim de semana", d:"A rotina das 20h não roda com o computador desligado. Na segunda as rotinas de produção saíram sem dados e foi preciso refazer à mão.", a:"Ver como evitar", peca:"rotina-manter-olist-ativa"});
-  const prs = ESTADO.pendencias.filter(x => x.tipo === "PR esperando aprovação" || x.tipo === "pr").map(x => ({idade_dias: x.idade_dias ?? 0, url: x.url || `https://github.com/postcopy/sulsport-empresa/pull/${x.numero}`, texto: x.texto || `PR ${x.numero}: mudança número ${x.numero}`}));
+  // Os destaques (quais peças viram aviso e com que texto) vêm do mapa, que só chega depois do login: a página pública não cita peça nenhuma.
+  const regras = MAPA.destaques || [];
+  const vale = r => r.pendencia ? ESTADO.pendencias.some(x => x.tipo === r.pendencia) : (r.pecas || []).some(id => (r.status || []).includes(ST(id).status));
+  const aviso = r => ({s:r.s, ic:r.ic, t:r.t, a:r.a, peca:P[r.peca] ? r.peca : null,
+    d:[r.d_de === "detalhe" ? ST(r.peca).detalhe : r.d_de === "conhecido" ? ((P[r.peca] || {}).conhecido || {}).texto : "", r.d].filter(Boolean).join(" ")});
+  for (const r of regras.filter(r => r.topo && vale(r))) out.push(aviso(r));
+  const prs = ESTADO.pendencias.filter(x => x.tipo === "PR esperando aprovação" || x.tipo === "pr").map(x => ({idade_dias: x.idade_dias ?? 0, url: x.url || (MAPA.repo_prs || "") + x.numero, texto: x.texto || `PR ${x.numero}: mudança número ${x.numero}`}));
   for (const x of ESTADO.pendencias.filter(x => x.tipo === "fonte")) out.push({s: x.gravidade || "atencao", ic:"plug", t:"Uma fonte não respondeu à verificação", d:x.texto, a:"Ver a peça", peca:x.peca && P[x.peca] ? x.peca : null});
   if (prs.length){
     const velho = prs.reduce((a,b) => a.idade_dias > b.idade_dias ? a : b);
     out.push({s:"atencao", ic:"merge", t:`${prs.length} mudanças esperando sua aprovação`, d:`A mais antiga está parada há ${velho.idade_dias} dias.`, a:"Revisar", lista:prs});
   }
-  const ns = ESTADO.pendencias.find(x => x.tipo === "Arquivos não salvos no git");
-  if (ns) out.push({s:"atencao", ic:"save", t:"Trabalho feito, mas não guardado", d:ST("repo-sulsport-empresa").detalhe + " Se o computador der problema, isso se perde.", a:"Guardar", peca:"repo-sulsport-empresa"});
-  if (ST("n8n-maestro").status === "falha" || ST("olist-api-v2-token").status === "falha")
-    out.push({s:"falha", ic:"stop", t:"A automação antiga (n8n) está parada desde julho", d:"A importação de pedidos e contas da Olist parou em 22/07 e o briefing do Maestro não responde desde 08/07. Decidir: consertar ou desligar de vez.", a:"Decidir", peca:"n8n-maestro"});
-  if (ST("fila-nuvem-github").status !== "ok")
-    out.push({s:"atencao", ic:"alert", t:"Fila na nuvem ligada sem registro", d:(P["fila-nuvem-github"].conhecido||{}).texto, a:"Decidir", peca:"fila-nuvem-github"});
-  if (ST("meta-instagram").status === "atencao")
-    out.push({s:"atencao", ic:"plug", t:"A conexão com o Meta pede login", d:"Sem ela, os relatórios e anúncios do Instagram não saem por aqui.", a:"Entrar de novo", peca:"meta-instagram"});
-  const ja = new Set(["rotina-manter-olist-ativa","repo-sulsport-empresa","n8n-maestro","olist-api-v2-token","fila-nuvem-github","meta-instagram"]);
+  for (const r of regras.filter(r => !r.topo && vale(r))) out.push(aviso(r));
+  const ja = new Set(regras.flatMap(r => [r.peca, ...(r.pecas || [])]));
   const ordem = {falha:0, atencao:1};
   const watch = MAPA.pecas.filter(p => ["falha","atencao"].includes(ST(p.id).status) && !ja.has(p.id))
     .sort((a,b) => ordem[ST(a.id).status] - ordem[ST(b.id).status] || a.nome.localeCompare(b.nome));
@@ -454,7 +451,7 @@ function renderMap(){
     return `<div class="col"><div class="colh"><h2>${esc(c.nome)}</h2><small>${ps.length}</small></div>${grupos.map(([a,list]) => `<div class="grp">${esc(a.nome)}</div>` + list.map(p => { const r = relOf(p.id); return `<button class="node${inArea(p) ? "" : " ghost"}" data-id="${p.id}"><span class="dot s-${ST(p.id).status}"></span><span class="t"><b>${esc(p.nome)}</b><small>${esc(p.tipo)}</small><small class="io">recebe de ${r.ins.length} · entrega em ${r.outs.length}</small></span></button>`; }).join("")).join("")}</div>`;
   }).join("");
   document.querySelectorAll(".node").forEach(n => n.addEventListener("click", () => { flowSel = null; select(n.dataset.id); }));
-  requestAnimationFrame(() => { drawLinks(); if (selected && vis.has(selected)) select(selected, flowSel, true); else { $("#map").classList.remove("focus"); renderPanel(selected || "rotina-producao-estoque-diario"); } });
+  requestAnimationFrame(() => { drawLinks(); if (selected && vis.has(selected)) select(selected, flowSel, true); else { $("#map").classList.remove("focus"); renderPanel(selected || MAPA.peca_inicial || MAPA.pecas[0].id); } });
 }
 function drawLinks(){
   const map = $("#map"), svg = $("#links"); if (getComputedStyle(svg).display === "none") return;
@@ -511,7 +508,7 @@ function pieceHTML(id){
   </dl>
   ${acts.length ? `<div class="actions">${acts.map(([ic,t,cl,ac]) => `<button class="btn sm ${cl}" data-act="${ac}"${ac === "" ? " disabled" : ""}>${IC[ic]}${esc(t)}</button>`).join("")}</div>` : ""}
   <div class="confirm-slot"></div>
-  <div class="proto" id="proto-${id}">Protótipo: na versão ligada, este botão manda o pedido para o assistente na nuvem e você acompanha o resultado aqui. O que grava na Olist, manda e-mail ou muda configuração espera a sua aprovação.</div>
+  <div class="proto" id="proto-${id}">Protótipo: na versão ligada, este botão manda o pedido para o assistente na nuvem e você acompanha o resultado aqui. O que grava em sistema, manda e-mail ou muda configuração espera a sua aprovação.</div>
   ${p.riscos && p.riscos !== "—" ? `<div class="risk"><h3>Riscos conhecidos</h3>${esc(p.riscos)}</div>` : ""}
   <div class="ref">${esc(p.referencia)}</div>`;
 }
