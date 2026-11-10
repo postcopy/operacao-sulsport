@@ -263,6 +263,8 @@ body.gated > .top, body.gated > main, body.gated > .bottomnav, body.gated > .ban
 .ped:first-child{border-top:0}
 .ped h3{font-size:14px;font-weight:600}
 .ped p{color:var(--ink-2);font-size:12.5px;margin-top:2px}
+.atd-t{text-align:right;white-space:nowrap}.atd-t small{display:block;color:var(--ink-3);font-size:11.5px}.atd-t b{font-weight:600;font-size:13.5px;font-variant-numeric:tabular-nums}
+.atd-h{padding:12px 18px 0;color:var(--ink-3);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase}
 .ped .res{grid-column:1/-1;font-size:12.5px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .btn[disabled]{opacity:.45;cursor:not-allowed}
 .confirm{margin-top:14px;padding:14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2)}
@@ -311,6 +313,7 @@ body.gated > .top, body.gated > main, body.gated > .bottomnav, body.gated > .ban
       <div class="leftcol">
         <div class="card"><div class="sec-h" style="padding:18px 18px 4px;margin:0"><h2>Precisa de você</h2><small id="todo-count"></small></div><div class="list" id="todo"></div></div>
         <div class="card" id="pedidos-card" hidden><div class="sec-h" style="padding:18px 18px 4px;margin:0"><h2>Pedidos</h2><small>o que foi pedido pela tela</small></div><div id="pedidos"></div></div>
+        <div class="card" id="atd-card" hidden><div class="sec-h" style="padding:18px 18px 4px;margin:0"><h2>Atendimento</h2><small id="atd-sub"></small></div><div id="atd"></div></div>
       </div>
       <div class="card flows"><div class="sec-h" style="padding:18px 18px 4px;margin:0"><h2>Caminhos principais</h2><small>toque para ver no mapa</small></div><div id="flows"></div></div>
     </div>
@@ -589,6 +592,75 @@ function resultadoTexto(r){
   if (r.codigo === "evidencia_consultada") return `${LABEL[r.status] || r.status}: ${r.detalhe || ""} ${r.orientacao || ""}`.trim();
   return ERRO[r.codigo] || "Terminou sem detalhe.";
 }
+/* ---------- atendimento: só números por atendente, lidos do banco; nenhum dado de cliente ---------- */
+let ATD = {linhas: [], erro: null};
+function diaBR(ms){ const x = partes(new Date(ms).toISOString()); return `${x.a}-${x.m}-${x.d}`; }
+function dur(seg){
+  if (seg == null || !isFinite(seg)) return "sem dado";
+  const t = Math.round(seg); if (t < 60) return `${t} s`; if (t < 3600) return `${Math.round(t / 60)} min`;
+  const h = Math.floor(t / 3600), m = Math.round((t % 3600) / 60); return m ? `${h} h ${m} min` : `${h} h`;
+}
+// Decide o que a tela diz. "desconectado": a leitura nunca gravou nada. "pendente": no expediente (7h às 20h) e sem leitura há mais de 2 h.
+function atendimentoVisao(linhas, erro, agoraMs){
+  if (erro) return {sit: ["PGRST205", "42P01"].includes(erro.code) ? "desconectado" : "erro"};
+  if (!linhas || !linhas.length) return {sit: "desconectado"};
+  const por = Object.fromEntries(linhas.map(l => [l.dia, l.dados || {}]));
+  const hoje = por[diaBR(agoraMs)] || null, ontem = por[diaBR(agoraMs - 864e5)] || null;
+  const ultima = hoje || ontem || linhas[0].dados || {}, lido = Date.parse(ultima.lido_em);
+  const hora = +partes(new Date(agoraMs).toISOString()).h, expediente = hora >= 7 && hora < 20;
+  const velho = !isFinite(lido) || agoraMs - lido > 2 * 36e5;
+  return {sit: expediente && (!hoje || velho) ? "pendente" : "ok", hoje, ontem, lido_em: isFinite(lido) ? ultima.lido_em : null, parado_desde: hoje || ontem ? null : linhas[0].dia};
+}
+function atdLinha(a){
+  const q = v => v == null ? "sem dado" : v;
+  return `<div class="ped"><div><h3>${esc(a.nome || "Atendente")}</h3><p>${esc(q(a.conversas))} ${a.conversas === 1 ? "conversa" : "conversas"} · ${esc(q(a.resolvidas))} ${a.resolvidas === 1 ? "resolvida" : "resolvidas"}</p></div><div class="atd-t"><small>1ª resposta</small><b>${esc(dur(a.primeira_resposta_media_s))}</b></div></div>`;
+}
+const ASSUNTO = {tamanho:"Tamanho", entrega_rastreio:"Entrega e rastreio", troca_devolucao:"Troca e devolução", pagamento:"Pagamento", preco_orcamento:"Preço e orçamento", produto_estoque:"Produto e estoque", outros:"Outros"};
+// Assuntos do dia, do mais falado para o menos. Campo ausente devolve lista vazia: a tela não mostra nada, nunca zero.
+function atdAssuntos(d){
+  const pa = d && d.assuntos && d.assuntos.por_assunto;
+  if (!pa || typeof pa !== "object") return [];
+  return Object.entries(pa).filter(([, v]) => v && v.conversas != null)
+    .map(([k, v]) => ({nome: ASSUNTO[k] || k.replace(/_/g, " "), conversas: v.conversas, sem_resposta: v.sem_resposta, primeira: v.primeira_resposta_media_s}))
+    .sort((a, b) => b.conversas - a.conversas || a.nome.localeCompare(b.nome));
+}
+function atdAssuntosHtml(titulo, d){
+  const l = atdAssuntos(d); if (!l.length) return "";
+  const lidas = d.assuntos.conversas_lidas;
+  return `<div class="atd-h">${esc(titulo)}${lidas != null ? ` · ${esc(lidas)} ${lidas === 1 ? "conversa lida" : "conversas lidas"}` : ""}</div>` + l.map(a =>
+    `<div class="ped"><div><h3>${esc(a.nome)}</h3><p>${esc(a.conversas)} ${a.conversas === 1 ? "conversa" : "conversas"}${a.sem_resposta > 0 ? ` · ${esc(a.sem_resposta)} sem resposta` : ""}</p></div><div class="atd-t"><small>1ª resposta</small><b>${esc(dur(a.primeira))}</b></div></div>`).join("");
+}
+function atdBloco(titulo, d){
+  const l = (d.atendentes || []);
+  return `<div class="atd-h">${esc(titulo)}</div>` + (l.length ? l.map(atdLinha).join("") : `<div class="ped"><div><p>Nenhuma conversa atendida nesse dia.</p></div></div>`);
+}
+function renderAtendimento(){
+  if (MODE === "demo") return;
+  $("#atd-card").hidden = false;
+  const v = atendimentoVisao(ATD.linhas, ATD.erro, Date.now()), aviso = (t, d) => `<div class="ped"><div><h3>${esc(t)}</h3><p>${esc(d)}</p></div></div>`;
+  if (v.sit === "desconectado") { $("#atd-sub").textContent = ""; $("#atd").innerHTML = aviso("Atendimento ainda não conectado", "Os números por atendente aparecem aqui quando a leitura do atendimento for ligada."); return; }
+  if (v.sit === "erro") { $("#atd-sub").textContent = ""; $("#atd").innerHTML = aviso("Não consegui ler o atendimento agora", "A tela tenta de novo em um minuto."); return; }
+  const quando = v.lido_em ? fmtBR(v.lido_em) : null;
+  $("#atd-sub").textContent = v.sit === "ok" && quando ? `lido em ${quando}` : "";
+  let h = "";
+  if (v.sit === "pendente") h += `<div class="ped"><div><h3>Leitura pendente</h3><p>${esc(v.parado_desde ? `Sem leitura desde ${v.parado_desde.split("-").reverse().join("/")}.` : !v.hoje ? "Hoje ainda não houve leitura." : "Sem leitura há mais de 2 horas.")}${quando ? ` Última: ${esc(quando)}.` : ""} Os números abaixo não são de agora.</p></div><span class="pill s-atencao"><span class="dot s-atencao"></span>Pendente</span></div>`;
+  const esp = v.hoje ? v.hoje.esperando_mais_de_2h : null;
+  if (esp != null) h += esp > 0
+    ? `<div class="ped"><div><h3>${esc(esp)} ${esp === 1 ? "cliente esperando" : "clientes esperando"} resposta há mais de 2 horas</h3><p>${v.sit === "ok" ? "Contagem da última leitura." : `Na leitura de ${esc(quando || "antes")}.`}</p></div><span class="pill s-falha"><span class="dot s-falha"></span>Responder</span></div>`
+    : `<div class="ped"><div><h3>Ninguém esperando resposta há mais de 2 horas</h3><p>${v.sit === "ok" ? "Contagem da última leitura." : `Na leitura de ${esc(quando || "antes")}.`}</p></div><span class="pill s-ok"><span class="dot s-ok"></span>Em dia</span></div>`;
+  const ab = v.hoje && v.hoje.abertas;
+  if (ab && ab.total != null) {
+    const sem = ab.sem_atendente, st = sem == null ? "manual" : sem > 0 ? "atencao" : "ok";
+    h += `<div class="ped"><div><h3>${esc(ab.total)} ${ab.total === 1 ? "conversa aberta" : "conversas abertas"}</h3><p>${v.sit === "ok" ? "Agora, somando todos os atendentes." : `Na leitura de ${esc(quando || "antes")}.`}</p></div><span class="pill s-${st}"><span class="dot s-${st}"></span>${sem == null ? "sem dado" : sem > 0 ? `${esc(sem)} sem atendente` : "todas com atendente"}</span></div>`;
+  }
+  const assH = v.hoje ? atdAssuntosHtml("Assuntos de hoje", v.hoje) : "", assO = v.ontem ? atdAssuntosHtml("Assuntos de ontem", v.ontem) : "";
+  // a ressalva vem antes dos números de tempo, não depois: quem lê o tempo já leu o aviso
+  if (assH || assO) h += `<div class="ped"><div class="res">O tempo de primeira resposta ainda não vale como desempenho da equipe: a resposta automática pode estar contando como primeira resposta. Isso está em conferência. Uma conversa pode entrar em mais de um assunto.</div></div>`;
+  if (v.hoje) h += assH + atdBloco("Por atendente, hoje até a última leitura", v.hoje);
+  if (v.ontem) h += assO + atdBloco("Por atendente, ontem", v.ontem);
+  $("#atd").innerHTML = h;
+}
+const lerAtendimento = () => sb.from("atendimento").select("dia,dados").order("dia", {ascending:false}).limit(2);
 function renderPedidos(){
   if (MODE === "demo") return;
   $("#pedidos-card").hidden = false;
@@ -631,15 +703,16 @@ function falhaCarga(texto){ gate("espera"); document.querySelector("#gate-wait h
 let ultimoEstado = null;
 async function atualizar(){
   if (MODE === "demo" || !sb) return;
-  const [es, pd] = await Promise.all([
+  const [es, pd, at] = await Promise.all([
     sb.from("estado").select("*").order("verificado_em", {ascending:false}).limit(1),
-    sb.from("pedidos").select("*").order("criado_em", {ascending:false}).limit(10)]);
+    sb.from("pedidos").select("*").order("criado_em", {ascending:false}).limit(10), lerAtendimento()]);
   if (!pd.error) PEDIDOS = pd.data || [];
+  ATD = {linhas: at.data || [], erro: at.error}; renderAtendimento();
   if (!es.error && (es.data[0] || {}).id !== ultimoEstado) { ESTADO = adaptar(es.data[0]); ultimoEstado = ESTADO._id; renderAll(); } else renderPedidos();
   avisoIdade();
 }
 function renderAll(){
-  indexar(); frase(); timeline(); renderTodo(); renderFlows(); renderTable(); renderPedidos();
+  indexar(); frase(); timeline(); renderTodo(); renderFlows(); renderTable(); renderPedidos(); renderAtendimento();
   document.querySelectorAll("#track .ev").forEach(b => b.addEventListener("click", () => openPiece(b.dataset.peca, true)));
   if ($("#v-mapa").classList.contains("on")) renderMap();
   $("#btn-verify").hidden = MODE === "app" && PAPEL !== "felipe";
@@ -650,10 +723,11 @@ async function carregar(user){
   const m = await sb.from("membros").select("papel,ativo").eq("usuario_id", user.id).maybeSingle();
   if (m.error || !m.data || !m.data.ativo) return gate("espera");
   PAPEL = m.data.papel;
-  const [mp, es, pd] = await Promise.all([
+  const [mp, es, pd, at] = await Promise.all([
     sb.from("mapa").select("dados").eq("id", "atual").maybeSingle(),
     sb.from("estado").select("*").order("verificado_em", {ascending:false}).limit(1),
-    sb.from("pedidos").select("*").order("criado_em", {ascending:false}).limit(10)]);
+    sb.from("pedidos").select("*").order("criado_em", {ascending:false}).limit(10), lerAtendimento()]);
+  ATD = {linhas: at.data || [], erro: at.error};
   if (mp.error || !mp.data) return falhaCarga("O mapa da operação ainda não foi publicado no banco.");
   if (es.error) return falhaCarga("Não consegui ler a última verificação.");
   MAPA = mp.data.dados; ESTADO = adaptar(es.data[0]); ultimoEstado = ESTADO._id; PEDIDOS = pd.data || [];
